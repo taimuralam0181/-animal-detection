@@ -1,0 +1,17 @@
+.blackbox/
+-p/
+datasets/
+
+frontend/node_modules/
+frontend/dist/
+
+backend/uploads/
+backend/__pycache__/
+backend/models/*.pt
+backend/*.pt
+
+*.pyc
+*.pyo
+*.pyd
+.DS_Store
+Thumbs.db
