@@ -1,0 +1,16 @@
+path: .
+train: images/train
+val: images/val
+test: images/test
+
+names:
+  0: dog
+  1: cat
+  2: cow
+  3: horse
+  4: deer
+  5: elephant
+  6: zebra
+  7: giraffe
+  8: tiger
+  9: lion

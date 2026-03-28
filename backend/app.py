@@ -27,9 +27,26 @@ CONFIDENCE_THRESHOLD = 0.25
 INFERENCE_IMAGE_SIZE = 960
 AGNOSTIC_NMS = True
 ANIMAL_CLASSES = {
-    'bird', 'cat', 'dog', 'horse', 'sheep', 'cow', 'elephant',
-    'bear', 'zebra', 'giraffe'
+    'cat',
+    'cow',
+    'dog',
+    'elephant',
+    'giraffe',
+    'horse',
+    'zebra',
 }
+TARGET_ANIMAL_CLASSES = [
+    'dog',
+    'cat',
+    'cow',
+    'horse',
+    'deer',
+    'elephant',
+    'zebra',
+    'giraffe',
+    'tiger',
+    'lion',
+]
 
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max
@@ -131,6 +148,8 @@ def health_check():
     return jsonify({
         'status': 'healthy',
         'model': loaded_model_name,
+        'supported_classes': sorted(ANIMAL_CLASSES),
+        'target_classes': TARGET_ANIMAL_CLASSES,
         'message': 'Animal Detection API is running'
     })
 
