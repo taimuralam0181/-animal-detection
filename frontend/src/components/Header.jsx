@@ -11,7 +11,7 @@ function Header() {
           <h1 className="text-2xl md:text-3xl font-bold">
             <span className="gradient-text">Animal Detection</span>
           </h1>
-          <p className="text-slate-400 text-sm mt-1">Powered by YOLOv8</p>
+          <p className="text-slate-400 text-sm mt-1">Powered by local YOLO + CLIP</p>
         </div>
       </div>
     </header>

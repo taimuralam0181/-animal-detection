@@ -1,4 +1,4 @@
-path: .
+path: C:/Users/HOTSPOT/OneDrive/Desktop/Animal detection/datasets/animals10
 train: images/train
 val: images/val
 test: images/test

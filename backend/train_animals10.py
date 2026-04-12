@@ -8,9 +8,41 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 DATASET_YAML = ROOT_DIR / "datasets" / "animals10" / "data.yaml"
 DEFAULT_MODEL = Path(__file__).resolve().parent / "models" / "yolov8m.pt"
 DEFAULT_PROJECT_DIR = ROOT_DIR / "runs"
+TARGET_ANIMAL_CLASSES = [
+    "dog",
+    "cat",
+    "cow",
+    "horse",
+    "deer",
+    "elephant",
+    "zebra",
+    "giraffe",
+    "tiger",
+    "lion",
+]
+
+
+def ensure_dataset_config():
+    dataset_root = (ROOT_DIR / "datasets" / "animals10").resolve().as_posix()
+    names_block = "\n".join(
+        f"  {index}: {name}"
+        for index, name in enumerate(TARGET_ANIMAL_CLASSES)
+    )
+    DATASET_YAML.write_text(
+        (
+            f"path: {dataset_root}\n"
+            "train: images/train\n"
+            "val: images/val\n"
+            "test: images/test\n\n"
+            "names:\n"
+            f"{names_block}\n"
+        ),
+        encoding="utf-8",
+    )
 
 
 def validate_dataset_layout():
+    ensure_dataset_config()
     required_paths = [
         DATASET_YAML,
         ROOT_DIR / "datasets" / "animals10" / "images" / "train",

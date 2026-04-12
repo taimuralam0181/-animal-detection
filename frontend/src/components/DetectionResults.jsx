@@ -1,6 +1,6 @@
-import { CheckCircle, AlertCircle, Box } from 'lucide-react';
+import { CheckCircle, AlertCircle, Box, ExternalLink, Server } from 'lucide-react';
 
-function DetectionResults({ results, error }) {
+function DetectionResults({ results, error, provider }) {
   if (error) {
     return (
       <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 flex items-center gap-4">
@@ -17,7 +17,7 @@ function DetectionResults({ results, error }) {
     return null;
   }
 
-  const { detections, image_url, total_detections } = results;
+  const { detections, image_url, total_detections, provider_label, provider_mode, message, external_url } = results;
 
   return (
     <div className="space-y-6">
@@ -28,9 +28,16 @@ function DetectionResults({ results, error }) {
             <Box className="w-5 h-5 text-green-500" />
             Detection Result
           </h3>
-          <span className="text-sm text-slate-400">
-            {total_detections} animal{total_detections !== 1 ? 's' : ''} found
-          </span>
+          <div className="text-right">
+            <div className="text-sm text-slate-400">
+              {total_detections} animal{total_detections !== 1 ? 's' : ''} found
+            </div>
+            <div className="text-xs text-slate-500 flex items-center justify-end gap-1 mt-1">
+              <Server className="w-3.5 h-3.5" />
+              {provider_label || provider}
+              {provider_mode ? ` - ${provider_mode}` : ''}
+            </div>
+          </div>
         </div>
         <div className="p-4">
           <img
@@ -40,6 +47,28 @@ function DetectionResults({ results, error }) {
           />
         </div>
       </div>
+
+      {message && (
+        <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-blue-300 font-medium">Provider message</p>
+              <p className="text-slate-300 text-sm mt-1">{message}</p>
+            </div>
+            {external_url && (
+              <a
+                href={external_url}
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center gap-2 text-sm text-blue-300 hover:text-blue-200 whitespace-nowrap"
+              >
+                Open
+                <ExternalLink className="w-4 h-4" />
+              </a>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Detection cards */}
       {detections && detections.length > 0 && (

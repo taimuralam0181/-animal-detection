@@ -16,7 +16,7 @@ const IMAGE_EXTENSIONS = [
   '.webp',
 ];
 
-function ImageUpload({ onImageSelect, isLoading }) {
+function ImageUpload({ onImageSelect, isLoading, providerLabel }) {
   const [dragOver, setDragOver] = useState(false);
   const [preview, setPreview] = useState(null);
   const fileInputRef = useRef(null);
@@ -107,6 +107,9 @@ function ImageUpload({ onImageSelect, isLoading }) {
               <p className="text-slate-400 text-sm mt-1">
                 or click to browse - most image formats are accepted
               </p>
+              <p className="text-slate-500 text-xs mt-2 uppercase tracking-wide">
+                Current source: {providerLabel}
+              </p>
             </div>
           </div>
         </div>
@@ -128,7 +131,9 @@ function ImageUpload({ onImageSelect, isLoading }) {
             <div className="absolute inset-0 bg-slate-900/60 flex items-center justify-center">
               <div className="flex flex-col items-center gap-3">
                 <Loader2 className="w-10 h-10 text-green-500 animate-spin" />
-                <p className="text-slate-300 font-medium">Detecting animals...</p>
+                <p className="text-slate-300 font-medium">
+                  Detecting with {providerLabel}...
+                </p>
               </div>
             </div>
           )}

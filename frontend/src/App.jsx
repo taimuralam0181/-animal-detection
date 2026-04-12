@@ -3,11 +3,16 @@ import axios from 'axios';
 import Header from './components/Header';
 import ImageUpload from './components/ImageUpload';
 import DetectionResults from './components/DetectionResults';
+import DatasetUpload from './components/DatasetUpload';
+
+const LOCAL_PROVIDER = 'local';
+const LOCAL_PROVIDER_LABEL = 'Local YOLO + CLIP';
 
 function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const provider = LOCAL_PROVIDER;
 
   const handleImageSelect = async (file) => {
     if (!file) return;
@@ -18,6 +23,7 @@ function App() {
 
     const formData = new FormData();
     formData.append('image', file);
+    formData.append('provider', provider);
 
     try {
       const response = await axios.post('/api/detect', formData, {
@@ -53,6 +59,7 @@ function App() {
             <ImageUpload
               onImageSelect={handleImageSelect}
               isLoading={isLoading}
+              providerLabel={LOCAL_PROVIDER_LABEL}
             />
           </section>
 
@@ -62,9 +69,16 @@ function App() {
               <h2 className="text-lg font-semibold text-slate-200 mb-4">
                 Results
               </h2>
-              <DetectionResults results={results} error={error} />
+              <DetectionResults results={results} error={error} provider={provider} />
             </section>
           )}
+
+          <section>
+            <h2 className="text-lg font-semibold text-slate-200 mb-4">
+              Dataset
+            </h2>
+            <DatasetUpload />
+          </section>
         </div>
       </main>
 
@@ -72,7 +86,7 @@ function App() {
       <footer className="border-t border-slate-700/50 py-6 mt-12">
         <div className="max-w-4xl mx-auto px-4 text-center">
           <p className="text-slate-500 text-sm">
-            Animal Detection using YOLOv8 - Built with React + Flask
+            Animal Detection using local YOLO + CLIP - Built with React + Flask
           </p>
         </div>
       </footer>
