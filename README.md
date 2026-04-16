@@ -73,6 +73,31 @@ If detection does not work:
 - refresh the browser
 - check the backend terminal for the real error
 
+## Custom Animal Flow
+
+You can train separate custom animal recognizers directly from the UI.
+
+Steps:
+
+1. Open `http://localhost:5173`
+2. Go to the `Custom Animal Training` section
+3. Enter a custom animal name such as `Tiger`
+4. Upload multiple same-type animal images
+5. Click `Train Custom Animal`
+6. Wait until status becomes `completed`
+7. In `Detection Model Selection`, choose one mode:
+   - `Default only`
+   - `Single model`
+   - `Selected models`
+   - `All models`
+8. Upload a new image in the `Upload Image` section
+
+Notes:
+
+- this custom flow uses CLIP-based image matching
+- it works best when you upload many clean images of the same animal type
+- custom models are stored under `custom_models/`
+
 ## Dataset Upload Flow
 
 The app supports uploading a YOLO dataset ZIP directly from the UI.

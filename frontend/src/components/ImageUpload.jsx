@@ -16,7 +16,7 @@ const IMAGE_EXTENSIONS = [
   '.webp',
 ];
 
-function ImageUpload({ onImageSelect, isLoading, providerLabel }) {
+function ImageUpload({ onImageSelect, isLoading, providerLabel, customSelectionLabel }) {
   const [dragOver, setDragOver] = useState(false);
   const [preview, setPreview] = useState(null);
   const fileInputRef = useRef(null);
@@ -109,6 +109,9 @@ function ImageUpload({ onImageSelect, isLoading, providerLabel }) {
               </p>
               <p className="text-slate-500 text-xs mt-2 uppercase tracking-wide">
                 Current source: {providerLabel}
+              </p>
+              <p className="text-slate-500 text-xs mt-1 uppercase tracking-wide">
+                Custom models: {customSelectionLabel}
               </p>
             </div>
           </div>

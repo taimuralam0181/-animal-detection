@@ -2,6 +2,7 @@
 .cache-home/
 -p/
 dd/
+custom_models/
 datasets/*
 !datasets/README.md
 !datasets/animals10/

@@ -1,10 +1,13 @@
 import importlib.util
 import io
+import json
 import os
+import re
 import shutil
 import subprocess
 import sys
 import tempfile
+import threading
 import uuid
 import zipfile
 from datetime import datetime
@@ -111,11 +114,16 @@ PROVIDER_METADATA = {
 }
 ACTIVE_DATASET_DIR = PROJECT_ROOT_PATH / 'datasets' / 'animals10'
 USER_DATASET_UPLOADS_DIR = PROJECT_ROOT_PATH / 'datasets' / 'user_uploads'
+CUSTOM_MODELS_DIR = PROJECT_ROOT_PATH / 'custom_models'
+CUSTOM_MODELS_REGISTRY_PATH = CUSTOM_MODELS_DIR / 'registry.json'
 TRAINING_SCRIPT_PATH = Path(__file__).resolve().parent / 'train_animals10.py'
 TRAINING_LOG_DIR = PROJECT_ROOT_PATH / 'runs' / 'logs'
 NORMALIZER_SCRIPT = PROJECT_ROOT_PATH / 'scripts' / 'normalize_dataset_zip.py'
 DATASET_REQUIRED_SPLITS = ('train', 'val')
 DATASET_ALL_SPLITS = ('train', 'val', 'test')
+CUSTOM_SELECTION_MODES = ('default', 'single', 'selected', 'all')
+CUSTOM_MIN_TRAINING_IMAGES = 5
+CUSTOM_MODEL_SCORE_FLOOR = 0.18
 DATASET_IMAGE_EXTENSIONS = {
     '.avif',
     '.bmp',
@@ -170,6 +178,7 @@ os.makedirs(CACHE_HOME, exist_ok=True)
 os.makedirs(CLIP_CACHE_DIR, exist_ok=True)
 os.makedirs(YOLO_CONFIG_DIR, exist_ok=True)
 os.makedirs(USER_DATASET_UPLOADS_DIR, exist_ok=True)
+os.makedirs(CUSTOM_MODELS_DIR, exist_ok=True)
 os.makedirs(TRAINING_LOG_DIR, exist_ok=True)
 os.environ['HOME'] = CACHE_HOME
 os.environ['USERPROFILE'] = CACHE_HOME
@@ -197,6 +206,21 @@ training_job = {
     'error': None,
     'process': None,
 }
+
+custom_training_job = {
+    'status': 'idle',
+    'model_id': None,
+    'model_name': None,
+    'started_at': None,
+    'finished_at': None,
+    'progress': 0,
+    'processed_images': 0,
+    'total_images': 0,
+    'error': None,
+    'message': None,
+    'thread': None,
+}
+custom_training_lock = threading.Lock()
 
 # Load YOLOv8 model
 print("Loading YOLOv8 model...")
@@ -312,6 +336,430 @@ def ensure_active_dataset_config():
     DATASET_CONFIG_PATH.write_text(config_text, encoding='utf-8')
 
 ensure_active_dataset_config()
+
+def load_json_file(path, default_value):
+    path = Path(path)
+    if not path.exists():
+        return default_value
+
+    with path.open('r', encoding='utf-8') as handle:
+        return json.load(handle)
+
+def save_json_file(path, payload):
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2), encoding='utf-8')
+
+def slugify_name(value):
+    slug = re.sub(r'[^a-z0-9]+', '-', value.strip().lower())
+    return slug.strip('-') or 'custom-animal'
+
+def get_custom_model_dir(model_id):
+    return CUSTOM_MODELS_DIR / model_id
+
+def get_custom_model_metadata_path(model_id):
+    return get_custom_model_dir(model_id) / 'metadata.json'
+
+def get_custom_model_prototype_path(model_id):
+    return get_custom_model_dir(model_id) / 'prototype.npy'
+
+def get_custom_model_images_dir(model_id):
+    return get_custom_model_dir(model_id) / 'images'
+
+def update_custom_registry():
+    registry_payload = {'models': []}
+
+    for model_dir in sorted(CUSTOM_MODELS_DIR.iterdir()) if CUSTOM_MODELS_DIR.exists() else []:
+        if not model_dir.is_dir():
+            continue
+        metadata_path = model_dir / 'metadata.json'
+        if not metadata_path.exists():
+            continue
+        registry_payload['models'].append(load_json_file(metadata_path, {}))
+
+    save_json_file(CUSTOM_MODELS_REGISTRY_PATH, registry_payload)
+    return registry_payload
+
+def save_custom_model_metadata(model_id, metadata):
+    metadata_path = get_custom_model_metadata_path(model_id)
+    save_json_file(metadata_path, metadata)
+    update_custom_registry()
+
+def list_custom_models():
+    registry = load_json_file(CUSTOM_MODELS_REGISTRY_PATH, {'models': []})
+    models = registry.get('models', [])
+    return sorted(
+        models,
+        key=lambda item: (
+            item.get('trained_at') or '',
+            item.get('created_at') or '',
+            item.get('name') or '',
+        ),
+        reverse=True,
+    )
+
+def get_custom_model_by_id(model_id):
+    for model in list_custom_models():
+        if model.get('id') == model_id:
+            return model
+    return None
+
+def reset_custom_training_job():
+    custom_training_job.update({
+        'status': 'idle',
+        'model_id': None,
+        'model_name': None,
+        'started_at': None,
+        'finished_at': None,
+        'progress': 0,
+        'processed_images': 0,
+        'total_images': 0,
+        'error': None,
+        'message': None,
+        'thread': None,
+    })
+
+def set_custom_training_state(**updates):
+    with custom_training_lock:
+        custom_training_job.update(updates)
+
+def serialize_custom_training_job():
+    with custom_training_lock:
+        thread = custom_training_job.get('thread')
+        if thread is not None and not thread.is_alive():
+            custom_training_job['thread'] = None
+
+        return {
+            'status': custom_training_job['status'],
+            'model_id': custom_training_job['model_id'],
+            'model_name': custom_training_job['model_name'],
+            'started_at': custom_training_job['started_at'],
+            'finished_at': custom_training_job['finished_at'],
+            'progress': custom_training_job['progress'],
+            'processed_images': custom_training_job['processed_images'],
+            'total_images': custom_training_job['total_images'],
+            'error': custom_training_job['error'],
+            'message': custom_training_job['message'],
+            'is_running': custom_training_job['status'] in {'preparing', 'training'},
+        }
+
+def custom_training_is_running():
+    training_state = serialize_custom_training_job()
+    return training_state['status'] in {'preparing', 'training'}
+
+def save_training_image(file_storage, output_path):
+    output_path = Path(output_path)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+
+    try:
+        file_storage.stream.seek(0)
+        with Image.open(file_storage.stream) as image:
+            image = ImageOps.exif_transpose(image)
+            image.load()
+            normalized_image = image.convert('RGB')
+            save_pil_image(normalized_image, str(output_path))
+    except (UnidentifiedImageError, OSError, ValueError) as exc:
+        raise ValueError(f'Unsupported training image: {file_storage.filename}') from exc
+
+def extract_crop_pil(image_array, bbox=None):
+    if bbox is None:
+        return Image.fromarray(image_array)
+
+    height, width = image_array.shape[:2]
+    clamped_bbox = clamp_bbox(bbox, width, height)
+    if clamped_bbox is None:
+        return None
+
+    x1, y1, x2, y2 = clamped_bbox
+    crop = image_array[y1:y2, x1:x2]
+    if crop.size == 0:
+        return None
+
+    return Image.fromarray(crop)
+
+def encode_pil_image_with_clip(pil_image):
+    if not clip_enabled:
+        raise RuntimeError('CLIP is not available for custom model training.')
+
+    image_tensor = clip_preprocess(pil_image).unsqueeze(0)
+    with torch.no_grad():
+        image_features = clip_model.encode_image(image_tensor)
+        image_features = image_features / image_features.norm(dim=-1, keepdim=True)
+
+    return image_features[0].cpu().numpy().astype(np.float32)
+
+def train_custom_model_worker(model_id, model_name, image_paths):
+    metadata = get_custom_model_by_id(model_id) or {
+        'id': model_id,
+        'name': model_name,
+    }
+
+    try:
+        set_custom_training_state(
+            status='preparing',
+            message='Preparing custom animal images...',
+        )
+        metadata.update({
+            'status': 'preparing',
+            'error': None,
+        })
+        save_custom_model_metadata(model_id, metadata)
+
+        embeddings = []
+        total_images = len(image_paths)
+        set_custom_training_state(total_images=total_images, processed_images=0, progress=0)
+
+        for index, image_path in enumerate(image_paths, start=1):
+            if index == 1:
+                set_custom_training_state(
+                    status='training',
+                    message='Building custom model embeddings...',
+                )
+                metadata['status'] = 'training'
+                save_custom_model_metadata(model_id, metadata)
+
+            with Image.open(image_path) as image:
+                image = ImageOps.exif_transpose(image).convert('RGB')
+                embeddings.append(encode_pil_image_with_clip(image))
+
+            progress = int(round((index / total_images) * 100))
+            set_custom_training_state(
+                processed_images=index,
+                progress=progress,
+            )
+
+        if not embeddings:
+            raise RuntimeError('No valid images were available for custom model training.')
+
+        embedding_matrix = np.vstack(embeddings).astype(np.float32)
+        prototype = embedding_matrix.mean(axis=0)
+        prototype /= np.linalg.norm(prototype) + 1e-12
+        similarity_scores = embedding_matrix @ prototype
+        threshold = float(
+            max(
+                CUSTOM_MODEL_SCORE_FLOOR,
+                min(0.95, float(np.percentile(similarity_scores, 20)) - 0.02),
+            )
+        )
+
+        np.save(get_custom_model_prototype_path(model_id), prototype.astype(np.float32))
+        metadata.update({
+            'status': 'completed',
+            'image_count': total_images,
+            'threshold': round(threshold, 4),
+            'trained_at': datetime.now().isoformat(timespec='seconds'),
+            'embedding_model': CLIP_MODEL_NAME,
+            'error': None,
+        })
+        save_custom_model_metadata(model_id, metadata)
+        set_custom_training_state(
+            status='completed',
+            finished_at=datetime.now().isoformat(timespec='seconds'),
+            progress=100,
+            processed_images=total_images,
+            total_images=total_images,
+            message='Custom animal model is ready.',
+            error=None,
+            thread=None,
+        )
+    except Exception as exc:
+        metadata.update({
+            'status': 'failed',
+            'error': str(exc),
+        })
+        save_custom_model_metadata(model_id, metadata)
+        set_custom_training_state(
+            status='failed',
+            finished_at=datetime.now().isoformat(timespec='seconds'),
+            error=str(exc),
+            message='Custom animal training failed.',
+            thread=None,
+        )
+
+def start_custom_model_training(model_name, image_files):
+    if not clip_enabled:
+        raise RuntimeError('Custom animal training requires CLIP, but CLIP is not available.')
+    if custom_training_is_running():
+        raise RuntimeError('Another custom animal model is already training.')
+    if not image_files:
+        raise ValueError('Upload at least one image to train a custom animal model.')
+    if len(image_files) < CUSTOM_MIN_TRAINING_IMAGES:
+        raise ValueError(
+            f'Upload at least {CUSTOM_MIN_TRAINING_IMAGES} images for better custom training.'
+        )
+
+    cleaned_name = model_name.strip()
+    if not cleaned_name:
+        raise ValueError('Custom animal name is required.')
+
+    model_id = f"{slugify_name(cleaned_name)}-{uuid.uuid4().hex[:6]}"
+    model_dir = get_custom_model_dir(model_id)
+    images_dir = get_custom_model_images_dir(model_id)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    image_paths = []
+    for index, image_file in enumerate(image_files, start=1):
+        extension = Path(secure_filename(image_file.filename or '')).suffix.lower()
+        if extension not in DATASET_IMAGE_EXTENSIONS:
+            extension = '.jpg'
+        output_path = images_dir / f'image-{index:04d}{extension}'
+        save_training_image(image_file, output_path)
+        image_paths.append(output_path)
+
+    metadata = {
+        'id': model_id,
+        'name': cleaned_name,
+        'slug': slugify_name(cleaned_name),
+        'status': 'preparing',
+        'image_count': len(image_paths),
+        'created_at': datetime.now().isoformat(timespec='seconds'),
+        'trained_at': None,
+        'threshold': None,
+        'error': None,
+    }
+    save_custom_model_metadata(model_id, metadata)
+
+    with custom_training_lock:
+        reset_custom_training_job()
+        custom_training_job.update({
+            'status': 'preparing',
+            'model_id': model_id,
+            'model_name': cleaned_name,
+            'started_at': datetime.now().isoformat(timespec='seconds'),
+            'finished_at': None,
+            'progress': 0,
+            'processed_images': 0,
+            'total_images': len(image_paths),
+            'error': None,
+            'message': 'Preparing custom animal images...',
+        })
+        thread = threading.Thread(
+            target=train_custom_model_worker,
+            args=(model_id, cleaned_name, image_paths),
+            daemon=True,
+        )
+        custom_training_job['thread'] = thread
+        thread.start()
+
+    return {
+        'model': metadata,
+        'training': serialize_custom_training_job(),
+    }
+
+def get_selected_custom_models(selection_mode, requested_model_ids):
+    completed_models = [
+        model_data
+        for model_data in list_custom_models()
+        if model_data.get('status') == 'completed'
+    ]
+    if not completed_models or selection_mode == 'default':
+        return []
+
+    if selection_mode == 'all':
+        return completed_models
+
+    requested_lookup = set(requested_model_ids or [])
+    selected_models = [
+        model_data
+        for model_data in completed_models
+        if model_data.get('id') in requested_lookup
+    ]
+    if selection_mode == 'single' and selected_models:
+        return selected_models[:1]
+    return selected_models
+
+def classify_crop_with_custom_models(image_array, bbox, selected_models):
+    if not selected_models or not clip_enabled:
+        return []
+
+    crop_image = extract_crop_pil(image_array, bbox)
+    if crop_image is None:
+        return []
+
+    image_embedding = encode_pil_image_with_clip(crop_image)
+    matches = []
+
+    for model_data in selected_models:
+        prototype_path = get_custom_model_prototype_path(model_data['id'])
+        if not prototype_path.exists():
+            continue
+
+        prototype = np.load(prototype_path).astype(np.float32)
+        similarity = float(np.dot(image_embedding, prototype))
+        threshold = float(model_data.get('threshold') or CUSTOM_MODEL_SCORE_FLOOR)
+        score = max(0.0, min(1.0, (similarity + 1.0) / 2.0))
+        matches.append({
+            'id': model_data['id'],
+            'name': model_data['name'],
+            'similarity': round(similarity, 4),
+            'score': round(score, 3),
+            'threshold': round(threshold, 4),
+            'accepted': similarity >= threshold,
+        })
+
+    return sorted(matches, key=lambda item: item['similarity'], reverse=True)
+
+def parse_custom_model_request(form_data):
+    selection_mode = (form_data.get('custom_mode') or 'default').strip().lower()
+    if selection_mode not in CUSTOM_SELECTION_MODES:
+        selection_mode = 'default'
+
+    raw_selected_ids = form_data.get('custom_model_ids', '[]')
+    selected_ids = []
+    if raw_selected_ids:
+        try:
+            parsed_ids = json.loads(raw_selected_ids)
+            if isinstance(parsed_ids, list):
+                selected_ids = [
+                    str(model_id).strip()
+                    for model_id in parsed_ids
+                    if str(model_id).strip()
+                ]
+        except json.JSONDecodeError:
+            selected_ids = [
+                model_id.strip()
+                for model_id in raw_selected_ids.split(',')
+                if model_id.strip()
+            ]
+
+    if selection_mode == 'single' and len(selected_ids) > 1:
+        selected_ids = selected_ids[:1]
+
+    return selection_mode, selected_ids
+
+def apply_custom_models_to_detections(image_array, detections, selection_mode, selected_model_ids):
+    selected_models = get_selected_custom_models(selection_mode, selected_model_ids)
+    if not selected_models:
+        return detections, []
+
+    enriched_detections = []
+    for detection in detections:
+        updated_detection = dict(detection)
+        custom_matches = classify_crop_with_custom_models(
+            image_array,
+            detection['bbox'],
+            selected_models,
+        )
+        updated_detection['custom_matches'] = custom_matches
+        if custom_matches:
+            top_match = custom_matches[0]
+            updated_detection['custom_match'] = top_match
+            if top_match['accepted']:
+                updated_detection['resolved_class'] = top_match['name']
+                updated_detection['resolved_confidence'] = top_match['score']
+            else:
+                updated_detection['resolved_class'] = detection['class']
+                updated_detection['resolved_confidence'] = detection['confidence']
+        else:
+            updated_detection['resolved_class'] = detection['class']
+            updated_detection['resolved_confidence'] = detection['confidence']
+
+        enriched_detections.append(updated_detection)
+
+    return enriched_detections, [
+        {'id': model_data['id'], 'name': model_data['name']}
+        for model_data in selected_models
+    ]
 
 def save_uploaded_image(file_storage):
     """Accept any Pillow-readable image and normalize it to JPEG for inference."""
@@ -950,6 +1398,8 @@ def build_detection_response(
     detections,
     message=None,
     external_url=None,
+    custom_selection_mode='default',
+    custom_models_used=None,
 ):
     if detections:
         base, _ = os.path.splitext(filepath)
@@ -967,6 +1417,8 @@ def build_detection_response(
         'provider': provider_id,
         'provider_label': PROVIDER_METADATA[provider_id]['label'],
         'provider_mode': PROVIDER_METADATA[provider_id]['mode'],
+        'custom_selection_mode': custom_selection_mode,
+        'custom_models_used': custom_models_used or [],
     }
 
     if message:
@@ -996,10 +1448,49 @@ def health_check():
         'clip_enabled': clip_enabled,
         'supported_classes': active_classes,
         'target_classes': TARGET_ANIMAL_CLASSES,
+        'custom_models': list_custom_models(),
         'default_provider': DEFAULT_PROVIDER if DEFAULT_PROVIDER in PROVIDER_METADATA else LOCAL_PROVIDER,
         'providers': get_provider_statuses(),
         'message': 'Animal Detection API is running'
     })
+
+@app.route('/api/custom-models/status', methods=['GET'])
+def custom_models_status():
+    return jsonify({
+        'success': True,
+        'clip_enabled': clip_enabled,
+        'selection_modes': list(CUSTOM_SELECTION_MODES),
+        'models': list_custom_models(),
+        'training': serialize_custom_training_job(),
+        'message': 'Custom animal models fetched successfully.',
+    })
+
+@app.route('/api/custom-models/train', methods=['POST'])
+def train_custom_model():
+    try:
+        if 'images' not in request.files:
+            return jsonify({'success': False, 'error': 'No training images were provided.'}), 400
+
+        model_name = (request.form.get('name') or '').strip()
+        image_files = [
+            image_file
+            for image_file in request.files.getlist('images')
+            if image_file and image_file.filename
+        ]
+        training_state = start_custom_model_training(model_name, image_files)
+        return jsonify({
+            'success': True,
+            'model': training_state['model'],
+            'training': training_state['training'],
+            'message': 'Custom animal training started.',
+        })
+    except ValueError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 400
+    except RuntimeError as exc:
+        return jsonify({'success': False, 'error': str(exc)}), 409
+    except Exception as exc:
+        print(f"Error: {str(exc)}")
+        return jsonify({'success': False, 'error': str(exc)}), 500
 
 @app.route('/api/datasets/status', methods=['GET'])
 def dataset_status():
@@ -1145,6 +1636,7 @@ def detect_animals():
 
         file = request.files['image']
         provider_id = request.form.get('provider', DEFAULT_PROVIDER).strip().lower()
+        custom_selection_mode, selected_custom_model_ids = parse_custom_model_request(request.form)
 
         if provider_id not in PROVIDER_METADATA:
             return jsonify({'success': False, 'error': 'Unsupported detection provider'}), 400
@@ -1177,6 +1669,13 @@ def detect_animals():
         else:
             detections, message, external_url = detect_with_seek_inaturalist()
 
+        detections, custom_models_used = apply_custom_models_to_detections(
+            image_array,
+            detections,
+            custom_selection_mode,
+            selected_custom_model_ids,
+        )
+
         return jsonify(
             build_detection_response(
                 provider_id,
@@ -1186,6 +1685,8 @@ def detect_animals():
                 detections,
                 message=message,
                 external_url=external_url,
+                custom_selection_mode=custom_selection_mode,
+                custom_models_used=custom_models_used,
             )
         )
     except Exception as e:

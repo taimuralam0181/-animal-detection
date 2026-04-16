@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import axios from 'axios';
 import Header from './components/Header';
 import ImageUpload from './components/ImageUpload';
 import DetectionResults from './components/DetectionResults';
 import DatasetUpload from './components/DatasetUpload';
+import CustomModelManager from './components/CustomModelManager';
 
 const LOCAL_PROVIDER = 'local';
 const LOCAL_PROVIDER_LABEL = 'Local YOLO + CLIP';
@@ -12,7 +13,94 @@ function App() {
   const [isLoading, setIsLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [error, setError] = useState(null);
+  const [customModels, setCustomModels] = useState([]);
+  const [customTraining, setCustomTraining] = useState(null);
+  const [clipEnabled, setClipEnabled] = useState(false);
+  const [customSelectionMode, setCustomSelectionMode] = useState('default');
+  const [selectedCustomModelIds, setSelectedCustomModelIds] = useState([]);
   const provider = LOCAL_PROVIDER;
+
+  const refreshCustomModels = async () => {
+    const response = await axios.get('/api/custom-models/status');
+    setCustomModels(response.data.models || []);
+    setCustomTraining(response.data.training || null);
+    setClipEnabled(Boolean(response.data.clip_enabled));
+  };
+
+  useEffect(() => {
+    let ignore = false;
+
+    const loadCustomModels = async () => {
+      try {
+        const response = await axios.get('/api/custom-models/status');
+        if (!ignore) {
+          setCustomModels(response.data.models || []);
+          setCustomTraining(response.data.training || null);
+          setClipEnabled(Boolean(response.data.clip_enabled));
+        }
+      } catch (_error) {
+        if (!ignore) {
+          setClipEnabled(false);
+        }
+      }
+    };
+
+    loadCustomModels();
+    const intervalId = setInterval(loadCustomModels, 5000);
+
+    return () => {
+      ignore = true;
+      clearInterval(intervalId);
+    };
+  }, []);
+
+  useEffect(() => {
+    const completedIds = customModels
+      .filter((model) => model.status === 'completed')
+      .map((model) => model.id);
+
+    if (customSelectionMode === 'single') {
+      const firstValidId = selectedCustomModelIds.find((id) => completedIds.includes(id));
+      if (firstValidId) {
+        if (selectedCustomModelIds.length !== 1 || selectedCustomModelIds[0] !== firstValidId) {
+          setSelectedCustomModelIds([firstValidId]);
+        }
+      } else if (completedIds[0]) {
+        setSelectedCustomModelIds([completedIds[0]]);
+      }
+      return;
+    }
+
+    if (customSelectionMode === 'selected') {
+      const validIds = selectedCustomModelIds.filter((id) => completedIds.includes(id));
+      if (validIds.length !== selectedCustomModelIds.length) {
+        setSelectedCustomModelIds(validIds);
+      }
+      return;
+    }
+
+    if (selectedCustomModelIds.length > 0) {
+      setSelectedCustomModelIds([]);
+    }
+  }, [customModels, customSelectionMode, selectedCustomModelIds]);
+
+  const customSelectionLabel = useMemo(() => {
+    if (customSelectionMode === 'default') {
+      return 'No custom model';
+    }
+    if (customSelectionMode === 'all') {
+      return `All models (${customModels.filter((model) => model.status === 'completed').length})`;
+    }
+    if (selectedCustomModelIds.length === 0) {
+      return 'No custom model selected';
+    }
+
+    const selectedNames = customModels
+      .filter((model) => selectedCustomModelIds.includes(model.id))
+      .map((model) => model.name);
+
+    return selectedNames.join(', ');
+  }, [customModels, customSelectionMode, selectedCustomModelIds]);
 
   const handleImageSelect = async (file) => {
     if (!file) return;
@@ -24,6 +112,8 @@ function App() {
     const formData = new FormData();
     formData.append('image', file);
     formData.append('provider', provider);
+    formData.append('custom_mode', customSelectionMode);
+    formData.append('custom_model_ids', JSON.stringify(selectedCustomModelIds));
 
     try {
       const response = await axios.post('/api/detect', formData, {
@@ -60,6 +150,23 @@ function App() {
               onImageSelect={handleImageSelect}
               isLoading={isLoading}
               providerLabel={LOCAL_PROVIDER_LABEL}
+              customSelectionLabel={customSelectionLabel}
+            />
+          </section>
+
+          <section>
+            <h2 className="text-lg font-semibold text-slate-200 mb-4">
+              Custom Animal Training
+            </h2>
+            <CustomModelManager
+              models={customModels}
+              training={customTraining}
+              clipEnabled={clipEnabled}
+              selectionMode={customSelectionMode}
+              selectedModelIds={selectedCustomModelIds}
+              onSelectionModeChange={setCustomSelectionMode}
+              onSelectedModelIdsChange={setSelectedCustomModelIds}
+              onRefresh={refreshCustomModels}
             />
           </section>
 

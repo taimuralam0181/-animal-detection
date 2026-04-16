@@ -17,7 +17,17 @@ function DetectionResults({ results, error, provider }) {
     return null;
   }
 
-  const { detections, image_url, total_detections, provider_label, provider_mode, message, external_url } = results;
+  const {
+    detections,
+    image_url,
+    total_detections,
+    provider_label,
+    provider_mode,
+    message,
+    external_url,
+    custom_models_used,
+    custom_selection_mode,
+  } = results;
 
   return (
     <div className="space-y-6">
@@ -47,6 +57,20 @@ function DetectionResults({ results, error, provider }) {
           />
         </div>
       </div>
+
+      {custom_selection_mode && custom_selection_mode !== 'default' && (
+        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+          <p className="text-amber-300 font-medium">Custom model mode</p>
+          <p className="text-slate-300 text-sm mt-1 capitalize">
+            {custom_selection_mode}
+          </p>
+          <p className="text-slate-400 text-sm mt-2">
+            {custom_models_used?.length > 0
+              ? custom_models_used.map((model) => model.name).join(', ')
+              : 'No completed custom models were available for this request.'}
+          </p>
+        </div>
+      )}
 
       {message && (
         <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
@@ -83,21 +107,44 @@ function DetectionResults({ results, error, provider }) {
                 <div className="flex items-center gap-2">
                   <CheckCircle className="w-5 h-5 text-green-500" />
                   <span className="font-medium text-slate-200 capitalize">
-                    {detection.class}
+                    {detection.resolved_class || detection.class}
                   </span>
                 </div>
                 <span className="text-sm text-slate-400">
-                  {(detection.confidence * 100).toFixed(1)}%
+                  {((detection.resolved_confidence ?? detection.confidence) * 100).toFixed(1)}%
                 </span>
               </div>
+
+              {detection.custom_match?.accepted && (
+                <div className="mb-3 rounded-lg border border-amber-500/20 bg-amber-500/10 px-3 py-2">
+                  <p className="text-amber-300 text-sm font-medium">
+                    Custom model matched: {detection.custom_match.name}
+                  </p>
+                  <p className="text-slate-400 text-xs mt-1">
+                    Base detector: {detection.class} ({(detection.confidence * 100).toFixed(1)}%)
+                  </p>
+                </div>
+              )}
               
               {/* Confidence bar */}
               <div className="h-2 bg-slate-700 rounded-full overflow-hidden mb-3">
                 <div
                   className="h-full progress-bar rounded-full transition-all duration-500"
-                  style={{ width: `${detection.confidence * 100}%` }}
+                  style={{ width: `${(detection.resolved_confidence ?? detection.confidence) * 100}%` }}
                 />
               </div>
+
+              {detection.custom_matches?.length > 0 && (
+                <div className="mb-3 text-xs text-slate-400 space-y-1">
+                  <p className="text-slate-300">Custom matches:</p>
+                  {detection.custom_matches.slice(0, 3).map((match) => (
+                    <p key={match.id}>
+                      {match.name}: {(match.score * 100).toFixed(1)}%
+                      {match.accepted ? ' accepted' : ''}
+                    </p>
+                  ))}
+                </div>
+              )}
               
               {/* Bounding box coordinates */}
               <div className="text-xs text-slate-500">
