@@ -62,7 +62,7 @@ CLOSED_SET_ANIMAL_CLASSES = {
     'horse',
     'zebra',
 }
-TARGET_ANIMAL_CLASSES = [
+TRAINING_TARGET_ANIMAL_CLASSES = [
     'dog',
     'cat',
     'cow',
@@ -74,16 +74,44 @@ TARGET_ANIMAL_CLASSES = [
     'tiger',
     'lion',
 ]
-TARGET_CLASS_SET = set(TARGET_ANIMAL_CLASSES)
+DETECTION_TARGET_ANIMAL_CLASSES = [
+    'lion',
+    'tiger',
+    'leopard',
+    'deer',
+    'dog',
+    'cat',
+    'elephant',
+    'giraffe',
+    'zebra',
+    'horse',
+    'snake',
+    'cow',
+    'bear',
+    'fox',
+    'monkey',
+]
+DETECTION_TARGET_CLASS_SET = set(DETECTION_TARGET_ANIMAL_CLASSES)
 LABEL_ALIASES = {
     'cattle': 'cow',
     'ox': 'cow',
     'bull': 'cow',
     'equine': 'horse',
     'deers': 'deer',
+    'leopards': 'leopard',
     'doe': 'deer',
     'stag': 'deer',
     'fawn': 'deer',
+    'snakes': 'snake',
+    'serpent': 'snake',
+    'serpents': 'snake',
+    'bears': 'bear',
+    'foxes': 'fox',
+    'monkeys': 'monkey',
+    'ape': 'monkey',
+    'apes': 'monkey',
+    'primate': 'monkey',
+    'primates': 'monkey',
 }
 PROVIDER_METADATA = {
     LOCAL_PROVIDER: {
@@ -227,8 +255,8 @@ print("Loading YOLOv8 model...")
 try:
     if MODEL_FILENAME.endswith('-world.pt'):
         model = YOLOWorld(MODEL_PATH)
-        model.set_classes(TARGET_ANIMAL_CLASSES)
-        active_classes = TARGET_ANIMAL_CLASSES
+        model.set_classes(DETECTION_TARGET_ANIMAL_CLASSES)
+        active_classes = DETECTION_TARGET_ANIMAL_CLASSES
         model_mode = 'open-vocabulary'
     else:
         model = YOLO(MODEL_PATH)
@@ -261,7 +289,7 @@ try:
         device='cpu',
         download_root=CLIP_CACHE_DIR,
     )
-    clip_text_tokens = clip_module.tokenize(TARGET_ANIMAL_CLASSES)
+    clip_text_tokens = clip_module.tokenize(DETECTION_TARGET_ANIMAL_CLASSES)
     clip_enabled = True
     print(f"CLIP classifier loaded successfully: {CLIP_MODEL_NAME}")
 except Exception as e:
@@ -323,7 +351,7 @@ def ensure_active_dataset_config():
     dataset_root = ACTIVE_DATASET_DIR.resolve().as_posix()
     names_block = '\n'.join(
         f'  {index}: {name}'
-        for index, name in enumerate(TARGET_ANIMAL_CLASSES)
+        for index, name in enumerate(TRAINING_TARGET_ANIMAL_CLASSES)
     )
     config_text = (
         f'path: {dataset_root}\n'
@@ -365,6 +393,17 @@ def get_custom_model_prototype_path(model_id):
 
 def get_custom_model_images_dir(model_id):
     return get_custom_model_dir(model_id) / 'images'
+
+def list_custom_model_images(model_id):
+    images_dir = get_custom_model_images_dir(model_id)
+    if not images_dir.exists():
+        return []
+
+    return sorted(
+        path
+        for path in images_dir.iterdir()
+        if path.is_file() and path.suffix.lower() in DATASET_IMAGE_EXTENSIONS
+    )
 
 def update_custom_registry():
     registry_payload = {'models': []}
@@ -460,6 +499,24 @@ def save_training_image(file_storage, output_path):
             save_pil_image(normalized_image, str(output_path))
     except (UnidentifiedImageError, OSError, ValueError) as exc:
         raise ValueError(f'Unsupported training image: {file_storage.filename}') from exc
+
+def append_training_images(model_id, image_files):
+    images_dir = get_custom_model_images_dir(model_id)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    existing_images = list_custom_model_images(model_id)
+    start_index = len(existing_images) + 1
+    new_image_paths = []
+
+    for offset, image_file in enumerate(image_files, start=0):
+        extension = Path(secure_filename(image_file.filename or '')).suffix.lower()
+        if extension not in DATASET_IMAGE_EXTENSIONS:
+            extension = '.jpg'
+        output_path = images_dir / f'image-{start_index + offset:04d}{extension}'
+        save_training_image(image_file, output_path)
+        new_image_paths.append(output_path)
+
+    return existing_images + new_image_paths, new_image_paths
 
 def extract_crop_pil(image_array, bbox=None):
     if bbox is None:
@@ -576,7 +633,7 @@ def train_custom_model_worker(model_id, model_name, image_paths):
             thread=None,
         )
 
-def start_custom_model_training(model_name, image_files):
+def start_custom_model_training(model_name, image_files, existing_model_id=None):
     if not clip_enabled:
         raise RuntimeError('Custom animal training requires CLIP, but CLIP is not available.')
     if custom_training_is_running():
@@ -588,35 +645,49 @@ def start_custom_model_training(model_name, image_files):
             f'Upload at least {CUSTOM_MIN_TRAINING_IMAGES} images for better custom training.'
         )
 
-    cleaned_name = model_name.strip()
-    if not cleaned_name:
-        raise ValueError('Custom animal name is required.')
+    existing_model = None
+    if existing_model_id:
+        existing_model = get_custom_model_by_id(existing_model_id)
+        if existing_model is None:
+            raise ValueError('Selected custom animal model was not found.')
 
-    model_id = f"{slugify_name(cleaned_name)}-{uuid.uuid4().hex[:6]}"
-    model_dir = get_custom_model_dir(model_id)
-    images_dir = get_custom_model_images_dir(model_id)
-    images_dir.mkdir(parents=True, exist_ok=True)
+    cleaned_name = (model_name or '').strip()
+    if existing_model is not None:
+        if not cleaned_name:
+            cleaned_name = existing_model['name']
+        model_id = existing_model['id']
+        all_image_paths, new_image_paths = append_training_images(model_id, image_files)
+        metadata = dict(existing_model)
+        metadata.update({
+            'name': cleaned_name,
+            'slug': slugify_name(cleaned_name),
+            'status': 'preparing',
+            'image_count': len(all_image_paths),
+            'last_appended_at': datetime.now().isoformat(timespec='seconds'),
+            'new_images_added': len(new_image_paths),
+            'error': None,
+        })
+        image_paths = all_image_paths
+    else:
+        if not cleaned_name:
+            raise ValueError('Custom animal name is required.')
 
-    image_paths = []
-    for index, image_file in enumerate(image_files, start=1):
-        extension = Path(secure_filename(image_file.filename or '')).suffix.lower()
-        if extension not in DATASET_IMAGE_EXTENSIONS:
-            extension = '.jpg'
-        output_path = images_dir / f'image-{index:04d}{extension}'
-        save_training_image(image_file, output_path)
-        image_paths.append(output_path)
+        model_id = f"{slugify_name(cleaned_name)}-{uuid.uuid4().hex[:6]}"
+        all_image_paths, new_image_paths = append_training_images(model_id, image_files)
+        metadata = {
+            'id': model_id,
+            'name': cleaned_name,
+            'slug': slugify_name(cleaned_name),
+            'status': 'preparing',
+            'image_count': len(all_image_paths),
+            'created_at': datetime.now().isoformat(timespec='seconds'),
+            'trained_at': None,
+            'threshold': None,
+            'error': None,
+            'new_images_added': len(new_image_paths),
+        }
+        image_paths = all_image_paths
 
-    metadata = {
-        'id': model_id,
-        'name': cleaned_name,
-        'slug': slugify_name(cleaned_name),
-        'status': 'preparing',
-        'image_count': len(image_paths),
-        'created_at': datetime.now().isoformat(timespec='seconds'),
-        'trained_at': None,
-        'threshold': None,
-        'error': None,
-    }
     save_custom_model_metadata(model_id, metadata)
 
     with custom_training_lock:
@@ -840,13 +911,13 @@ def normalize_target_label(raw_label):
         candidates.append(normalized[:-1])
 
     for candidate in candidates:
-        if candidate in TARGET_CLASS_SET:
+        if candidate in DETECTION_TARGET_CLASS_SET:
             return candidate
         if candidate in LABEL_ALIASES:
             return LABEL_ALIASES[candidate]
 
         for token in candidate.split():
-            if token in TARGET_CLASS_SET:
+            if token in DETECTION_TARGET_CLASS_SET:
                 return token
             if token in LABEL_ALIASES:
                 return LABEL_ALIASES[token]
@@ -1150,7 +1221,7 @@ def classify_crop_with_clip(image_array, bbox):
         probabilities = logits_per_image.softmax(dim=-1)[0]
 
     best_index = int(torch.argmax(probabilities).item())
-    best_label = TARGET_ANIMAL_CLASSES[best_index]
+    best_label = DETECTION_TARGET_ANIMAL_CLASSES[best_index]
     best_probability = float(probabilities[best_index].item())
     return best_label, best_probability
 
@@ -1447,7 +1518,8 @@ def health_check():
         'model_mode': model_mode,
         'clip_enabled': clip_enabled,
         'supported_classes': active_classes,
-        'target_classes': TARGET_ANIMAL_CLASSES,
+        'target_classes': DETECTION_TARGET_ANIMAL_CLASSES,
+        'training_target_classes': TRAINING_TARGET_ANIMAL_CLASSES,
         'custom_models': list_custom_models(),
         'default_provider': DEFAULT_PROVIDER if DEFAULT_PROVIDER in PROVIDER_METADATA else LOCAL_PROVIDER,
         'providers': get_provider_statuses(),
@@ -1472,22 +1544,55 @@ def train_custom_model():
             return jsonify({'success': False, 'error': 'No training images were provided.'}), 400
 
         model_name = (request.form.get('name') or '').strip()
+        existing_model_id = (request.form.get('existing_model_id') or '').strip() or None
         image_files = [
             image_file
             for image_file in request.files.getlist('images')
             if image_file and image_file.filename
         ]
-        training_state = start_custom_model_training(model_name, image_files)
+        training_state = start_custom_model_training(
+            model_name,
+            image_files,
+            existing_model_id=existing_model_id,
+        )
         return jsonify({
             'success': True,
             'model': training_state['model'],
             'training': training_state['training'],
-            'message': 'Custom animal training started.',
+            'message': (
+                'Custom animal retraining started.'
+                if existing_model_id
+                else 'Custom animal training started.'
+            ),
         })
     except ValueError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 400
     except RuntimeError as exc:
         return jsonify({'success': False, 'error': str(exc)}), 409
+    except Exception as exc:
+        print(f"Error: {str(exc)}")
+        return jsonify({'success': False, 'error': str(exc)}), 500
+
+@app.route('/api/custom-models/<model_id>', methods=['DELETE'])
+def delete_custom_model(model_id):
+    try:
+        model_data = get_custom_model_by_id(model_id)
+        if model_data is None:
+            return jsonify({'success': False, 'error': 'Custom model not found.'}), 404
+
+        if custom_training_is_running() and serialize_custom_training_job().get('model_id') == model_id:
+            return jsonify({
+                'success': False,
+                'error': 'Cannot delete a custom model while it is training.',
+            }), 409
+
+        shutil.rmtree(get_custom_model_dir(model_id), ignore_errors=True)
+        update_custom_registry()
+        return jsonify({
+            'success': True,
+            'deleted_model_id': model_id,
+            'message': 'Custom model deleted successfully.',
+        })
     except Exception as exc:
         print(f"Error: {str(exc)}")
         return jsonify({'success': False, 'error': str(exc)}), 500
@@ -1498,7 +1603,8 @@ def dataset_status():
     return jsonify({
         'success': True,
         'dataset': summarize_dataset(ACTIVE_DATASET_DIR),
-        'target_classes': TARGET_ANIMAL_CLASSES,
+        'target_classes': TRAINING_TARGET_ANIMAL_CLASSES,
+        'detection_target_classes': DETECTION_TARGET_ANIMAL_CLASSES,
         'message': 'Upload a YOLO dataset ZIP to merge it into the training dataset.',
     })
 

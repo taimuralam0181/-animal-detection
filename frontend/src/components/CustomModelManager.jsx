@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import axios from 'axios';
 import {
   Brain,
@@ -6,8 +6,11 @@ import {
   ImageIcon,
   Loader2,
   PawPrint,
+  RefreshCw,
   Sparkles,
+  Trash2,
   Upload,
+  Layers3,
 } from 'lucide-react';
 
 const TRAINING_ACTIVE_STATES = new Set(['preparing', 'training']);
@@ -30,7 +33,9 @@ function CustomModelManager({
 }) {
   const [animalName, setAnimalName] = useState('');
   const [trainingFiles, setTrainingFiles] = useState([]);
+  const [targetModelId, setTargetModelId] = useState(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [deletingModelId, setDeletingModelId] = useState(null);
   const [uploadPercent, setUploadPercent] = useState(0);
   const [error, setError] = useState(null);
   const [message, setMessage] = useState('');
@@ -41,6 +46,17 @@ function CustomModelManager({
     [models],
   );
   const trainingActive = TRAINING_ACTIVE_STATES.has(training?.status);
+  const targetModel = useMemo(
+    () => models.find((model) => model.id === targetModelId) || null,
+    [models, targetModelId],
+  );
+
+  useEffect(() => {
+    if (targetModelId && !targetModel) {
+      setTargetModelId(null);
+      setAnimalName('');
+    }
+  }, [targetModel, targetModelId]);
 
   const handleFiles = (event) => {
     const files = Array.from(event.target.files || []);
@@ -50,7 +66,7 @@ function CustomModelManager({
   };
 
   const handleStartTraining = async () => {
-    if (!animalName.trim()) {
+    if (!animalName.trim() && !targetModelId) {
       setError('Custom animal name is required.');
       return;
     }
@@ -66,6 +82,9 @@ function CustomModelManager({
 
     const formData = new FormData();
     formData.append('name', animalName.trim());
+    if (targetModelId) {
+      formData.append('existing_model_id', targetModelId);
+    }
     trainingFiles.forEach((file) => {
       formData.append('images', file);
     });
@@ -85,6 +104,7 @@ function CustomModelManager({
       setMessage(response.data.message || 'Custom animal training started.');
       setAnimalName('');
       setTrainingFiles([]);
+      setTargetModelId(null);
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
@@ -94,6 +114,48 @@ function CustomModelManager({
     } finally {
       setIsSubmitting(false);
       setUploadPercent(0);
+    }
+  };
+
+  const prepareRetrain = (model) => {
+    setTargetModelId(model.id);
+    setAnimalName(model.name);
+    setTrainingFiles([]);
+    setError(null);
+    setMessage(`Selected ${model.name}. Choose more images to append, then train again.`);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const resetToNewModel = () => {
+    setTargetModelId(null);
+    setAnimalName('');
+    setTrainingFiles([]);
+    setError(null);
+    setMessage('');
+    if (fileInputRef.current) {
+      fileInputRef.current.value = '';
+    }
+  };
+
+  const handleDeleteModel = async (model) => {
+    setDeletingModelId(model.id);
+    setError(null);
+    setMessage('');
+
+    try {
+      const response = await axios.delete(`/api/custom-models/${model.id}`);
+      if (targetModelId === model.id) {
+        resetToNewModel();
+      }
+      onSelectedModelIdsChange(selectedModelIds.filter((id) => id !== model.id));
+      setMessage(response.data.message || `${model.name} deleted.`);
+      await onRefresh();
+    } catch (requestError) {
+      setError(requestError.response?.data?.error || 'Failed to delete custom model.');
+    } finally {
+      setDeletingModelId(null);
     }
   };
 
@@ -121,7 +183,7 @@ function CustomModelManager({
   };
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 space-y-6">
+    <div className="dashboard-panel dashboard-panel-spacious space-y-6">
       <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
         <div>
           <h3 className="text-slate-100 font-semibold flex items-center gap-2">
@@ -132,7 +194,7 @@ function CustomModelManager({
             Add one animal name, upload many same-type images, and train a custom recognizer. Later you can run one model, many selected models, or all trained models together.
           </p>
         </div>
-        <div className="rounded-lg border border-slate-700 bg-slate-900/60 px-4 py-3 min-w-52">
+        <div className="dashboard-subpanel rounded-[18px] px-4 py-3 min-w-52">
           <p className="text-slate-300 text-sm font-medium">Current custom mode</p>
           <p className="text-amber-300 text-sm mt-1 capitalize">{selectionMode}</p>
           <p className="text-slate-500 text-xs mt-2">
@@ -141,15 +203,17 @@ function CustomModelManager({
         </div>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-5">
-        <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-4">
+      <div className="grid items-start gap-5 xl:grid-cols-12">
+        <div className="dashboard-subpanel rounded-[22px] p-4 space-y-4 xl:col-span-7">
           <div>
             <p className="text-slate-100 font-medium flex items-center gap-2">
               <PawPrint className="w-4 h-4 text-emerald-300" />
-              Add Custom Animal
+              {targetModel ? `Add Images To ${targetModel.name}` : 'Add Custom Animal'}
             </p>
             <p className="text-slate-400 text-sm mt-2">
-              Example: Tiger, Panda, Black Panther. More images usually mean better recognition.
+              {targetModel
+                ? 'New images will be saved in the same model folder and then the model will retrain without overwriting the old images.'
+                : 'Example: Tiger, Panda, Black Panther. More images usually mean better recognition.'}
             </p>
           </div>
 
@@ -162,7 +226,18 @@ function CustomModelManager({
               className="w-full rounded-lg border border-slate-700 bg-slate-950 px-4 py-3 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-amber-400/50"
             />
 
-            <div className="rounded-lg border border-dashed border-slate-600 bg-slate-950/60 p-4">
+            {targetModel && (
+              <button
+                type="button"
+                onClick={resetToNewModel}
+                className="inline-flex items-center gap-2 rounded-lg bg-slate-700 hover:bg-slate-600 text-slate-100 px-4 py-2 text-sm transition-colors"
+              >
+                <RefreshCw className="w-4 h-4" />
+                Create New Model Instead
+              </button>
+            )}
+
+            <div className="rounded-[18px] border border-dashed border-slate-600 bg-slate-950/60 p-4">
               <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
                 <div>
                   <p className="text-slate-200 text-sm font-medium">Training images</p>
@@ -221,7 +296,7 @@ function CustomModelManager({
             className="inline-flex items-center gap-2 rounded-lg bg-emerald-500 hover:bg-emerald-400 disabled:bg-emerald-500/50 text-slate-950 font-medium px-4 py-3 transition-colors"
           >
             {isSubmitting || trainingActive ? <Loader2 className="w-4 h-4 animate-spin" /> : <Sparkles className="w-4 h-4" />}
-            Train Custom Animal
+            {targetModel ? 'Append Images And Retrain' : 'Train Custom Animal'}
           </button>
 
           {!clipEnabled && (
@@ -231,19 +306,19 @@ function CustomModelManager({
           )}
 
           {message && (
-            <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-3 text-sm text-green-300">
+            <div className="status-surface status-success text-sm text-green-300">
               {message}
             </div>
           )}
 
           {error && (
-            <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-3 text-sm text-red-300">
+            <div className="status-surface status-error text-sm text-red-300">
               {error}
             </div>
           )}
         </div>
 
-        <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-4">
+        <div className="dashboard-subpanel rounded-[22px] p-4 space-y-4 xl:col-span-5">
           <div>
             <p className="text-slate-100 font-medium">Training Status</p>
             <p className="text-slate-400 text-sm mt-2 capitalize">
@@ -287,7 +362,7 @@ function CustomModelManager({
         </div>
       </div>
 
-      <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-4 space-y-4">
+      <div className="dashboard-subpanel rounded-[22px] p-4 space-y-4">
         <div>
           <p className="text-slate-100 font-medium">Detection Model Selection</p>
           <p className="text-slate-400 text-sm mt-2">
@@ -332,7 +407,7 @@ function CustomModelManager({
             {completedModels.map((model) => (
               <label
                 key={model.id}
-                className="flex items-center gap-3 rounded-lg border border-slate-700 bg-slate-950/60 px-4 py-3 text-slate-300"
+                className="flex items-center gap-3 rounded-lg border border-white/10 bg-slate-950/60 px-4 py-3 text-slate-300"
               >
                 <input
                   type="checkbox"
@@ -350,55 +425,115 @@ function CustomModelManager({
         )}
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="space-y-4">
+        <div>
+          <p className="text-slate-100 font-medium flex items-center gap-2">
+            <Layers3 className="w-4 h-4 text-sky-300" />
+            Animal Model Library
+          </p>
+          <p className="text-slate-400 text-sm mt-2">
+            Manage trained animal profiles, add more images, or remove models you no longer need.
+          </p>
+        </div>
+
+        <div className="grid auto-rows-fr gap-4 lg:grid-cols-2">
         {models.map((model) => {
           const isSelected = selectedModelIds.includes(model.id);
           return (
             <div
               key={model.id}
-              className={`rounded-xl border p-4 ${
+              className={`dashboard-subpanel rounded-[22px] border p-4 h-full flex flex-col ${
                 isSelected
-                  ? 'border-sky-400/60 bg-sky-500/10'
+                  ? 'border-sky-400/60 bg-sky-500/10 shadow-[0_0_0_1px_rgba(56,189,248,0.18)]'
                   : 'border-slate-700 bg-slate-900/40'
               }`}
             >
               <div className="flex items-start justify-between gap-4">
-                <div>
-                  <p className="text-slate-100 font-medium">{model.name}</p>
-                  <p className="text-slate-500 text-xs mt-1">{model.id}</p>
+                <div className="flex items-start gap-3 min-w-0">
+                  <div className="h-11 w-11 rounded-2xl bg-slate-950/80 border border-white/10 flex items-center justify-center shrink-0">
+                    <PawPrint className="w-5 h-5 text-emerald-300" />
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-slate-100 font-medium truncate">{model.name}</p>
+                    <p className="text-slate-500 text-xs mt-1 truncate">{model.id}</p>
+                  </div>
                 </div>
                 <span
-                  className={`text-xs uppercase tracking-wide ${
+                  className={`shrink-0 rounded-full px-2.5 py-1 text-[11px] font-medium uppercase tracking-wide ${
                     model.status === 'completed'
-                      ? 'text-green-300'
+                      ? 'bg-emerald-500/12 text-green-300'
                       : model.status === 'failed'
-                        ? 'text-red-300'
-                        : 'text-amber-300'
+                        ? 'bg-red-500/12 text-red-300'
+                        : 'bg-amber-500/12 text-amber-300'
                   }`}
                 >
                   {model.status}
                 </span>
               </div>
 
-              <div className="mt-3 text-sm text-slate-400 space-y-1">
-                <p>Images: {model.image_count || 0}</p>
-                {model.threshold && <p>Match threshold: {model.threshold}</p>}
-                {model.trained_at && <p>Trained: {model.trained_at}</p>}
-                {model.error && <p className="text-red-300">Error: {model.error}</p>}
+              <div className="mt-4 grid grid-cols-2 gap-3">
+                <div className="rounded-2xl border border-white/8 bg-slate-950/55 px-3 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Images</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-100">{model.image_count || 0}</p>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-slate-950/55 px-3 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Threshold</p>
+                  <p className="mt-2 text-lg font-semibold text-slate-100">{model.threshold || '-'}</p>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-slate-950/55 px-3 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Trained</p>
+                  <p className="mt-2 text-sm font-medium text-slate-200">{model.trained_at || 'Not yet'}</p>
+                </div>
+                <div className="rounded-2xl border border-white/8 bg-slate-950/55 px-3 py-3">
+                  <p className="text-[11px] uppercase tracking-[0.18em] text-slate-500">Last Update</p>
+                  <p className="mt-2 text-sm font-medium text-slate-200">{model.last_appended_at || 'Initial set'}</p>
+                </div>
               </div>
 
               {model.status === 'completed' && (
-                <div className="mt-3 inline-flex items-center gap-2 text-xs text-green-300">
+                <div className="mt-4 inline-flex items-center gap-2 rounded-full bg-emerald-500/10 px-3 py-1.5 text-xs text-green-300 w-fit">
                   <CheckCircle2 className="w-4 h-4" />
                   Ready for detection
                 </div>
               )}
+
+              {model.error && (
+                <div className="status-surface status-error mt-4 text-sm text-red-300">
+                  Error: {model.error}
+                </div>
+              )}
+
+              <div className="mt-auto pt-5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => prepareRetrain(model)}
+                  disabled={trainingActive}
+                  className="inline-flex w-full justify-center items-center gap-2 rounded-xl bg-amber-400 hover:bg-amber-300 disabled:bg-amber-400/50 text-slate-950 px-3 py-2.5 text-sm font-medium transition-colors"
+                >
+                  <RefreshCw className="w-4 h-4" />
+                  Add More Images
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteModel(model)}
+                  disabled={deletingModelId === model.id || trainingActive}
+                  className="inline-flex w-full justify-center items-center gap-2 rounded-xl bg-red-500/80 hover:bg-red-400 disabled:bg-red-500/40 text-white px-3 py-2.5 text-sm font-medium transition-colors"
+                >
+                  {deletingModelId === model.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="w-4 h-4" />
+                  )}
+                  Delete
+                </button>
+              </div>
             </div>
           );
         })}
+        </div>
 
         {models.length === 0 && (
-          <div className="rounded-xl border border-slate-700 bg-slate-900/40 p-6 text-sm text-slate-500">
+          <div className="dashboard-subpanel rounded-[22px] border border-white/10 p-8 text-sm text-slate-500 text-center">
             No custom animal models yet. Add one above, upload same-type images, then train it.
           </div>
         )}

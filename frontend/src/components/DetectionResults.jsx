@@ -3,7 +3,7 @@ import { CheckCircle, AlertCircle, Box, ExternalLink, Server } from 'lucide-reac
 function DetectionResults({ results, error, provider }) {
   if (error) {
     return (
-      <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-6 flex items-center gap-4">
+      <div className="status-surface status-error flex items-center gap-4">
         <AlertCircle className="w-8 h-8 text-red-500 flex-shrink-0" />
         <div>
           <h3 className="text-red-400 font-semibold">Error</h3>
@@ -32,8 +32,8 @@ function DetectionResults({ results, error, provider }) {
   return (
     <div className="space-y-6">
       {/* Image with bounding boxes */}
-      <div className="bg-slate-800 rounded-xl overflow-hidden border border-slate-700">
-        <div className="p-4 border-b border-slate-700 flex items-center justify-between">
+      <div className="dashboard-panel overflow-hidden">
+        <div className="p-4 border-b border-white/10 flex items-center justify-between">
           <h3 className="font-semibold text-slate-200 flex items-center gap-2">
             <Box className="w-5 h-5 text-green-500" />
             Detection Result
@@ -59,7 +59,7 @@ function DetectionResults({ results, error, provider }) {
       </div>
 
       {custom_selection_mode && custom_selection_mode !== 'default' && (
-        <div className="bg-amber-500/10 border border-amber-500/30 rounded-xl p-4">
+        <div className="status-surface status-warning">
           <p className="text-amber-300 font-medium">Custom model mode</p>
           <p className="text-slate-300 text-sm mt-1 capitalize">
             {custom_selection_mode}
@@ -73,7 +73,7 @@ function DetectionResults({ results, error, provider }) {
       )}
 
       {message && (
-        <div className="bg-blue-500/10 border border-blue-500/30 rounded-xl p-4">
+        <div className="status-surface status-info">
           <div className="flex items-start justify-between gap-4">
             <div>
               <p className="text-blue-300 font-medium">Provider message</p>
@@ -100,7 +100,7 @@ function DetectionResults({ results, error, provider }) {
           {detections.map((detection, index) => (
             <div
               key={index}
-              className="bg-slate-800 rounded-xl p-4 border border-slate-700 hover:border-green-500/50 transition-colors animate-fadeIn"
+              className="dashboard-subpanel rounded-[20px] p-4 border border-white/10 hover:border-emerald-400/40 transition-colors animate-fadeIn"
               style={{ animationDelay: `${index * 100}ms` }}
             >
               <div className="flex items-start justify-between mb-3">
@@ -164,7 +164,7 @@ function DetectionResults({ results, error, provider }) {
       )}
 
       {detections && detections.length === 0 && (
-        <div className="bg-slate-800/50 rounded-xl p-8 text-center border border-slate-700">
+        <div className="dashboard-subpanel rounded-[22px] p-8 text-center border border-white/10">
           <AlertCircle className="w-12 h-12 text-slate-500 mx-auto mb-3" />
           <p className="text-slate-400">No animals detected in this image</p>
           <p className="text-slate-500 text-sm mt-1">

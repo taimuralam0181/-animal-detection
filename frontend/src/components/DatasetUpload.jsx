@@ -120,7 +120,7 @@ function DatasetUpload() {
   }[trainingStatus] || 'text-slate-300';
 
   return (
-    <div className="bg-slate-800 rounded-xl border border-slate-700 p-6 space-y-5">
+    <div className="dashboard-panel dashboard-panel-spacious space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div>
           <h3 className="text-slate-100 font-semibold flex items-center gap-2">
@@ -160,11 +160,11 @@ function DatasetUpload() {
         className="hidden"
       />
 
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+      <div className="grid auto-rows-fr gap-3 md:grid-cols-3">
         {splitRows.map(([splitName, splitData]) => (
           <div
             key={splitName}
-            className="rounded-lg border border-slate-700 bg-slate-900/50 p-4"
+            className="dashboard-subpanel rounded-[18px] p-4 h-full"
           >
             <p className="text-slate-200 font-medium capitalize">{splitName}</p>
             <p className="text-slate-400 text-sm mt-2">
@@ -177,7 +177,7 @@ function DatasetUpload() {
         ))}
       </div>
 
-      <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-4">
+      <div className="dashboard-subpanel rounded-[20px] p-4">
         <p className="text-slate-300 text-sm font-medium flex items-center gap-2">
           <FileArchive className="w-4 h-4 text-sky-400" />
           ZIP layout
@@ -193,7 +193,7 @@ function DatasetUpload() {
         </p>
       </div>
 
-      <div className="rounded-lg border border-slate-700 bg-slate-900/40 p-4 space-y-4">
+      <div className="dashboard-subpanel rounded-[20px] p-4 space-y-4">
         <div className="flex items-start justify-between gap-4">
           <div>
             <p className="text-slate-100 font-medium">Train Custom Model</p>
@@ -229,7 +229,7 @@ function DatasetUpload() {
         )}
 
         {training?.log_tail?.length > 0 && (
-          <div className="rounded-lg bg-slate-950 border border-slate-700 p-3">
+          <div className="rounded-lg bg-slate-950/90 border border-white/10 p-3">
             <p className="text-slate-300 text-xs uppercase tracking-wide mb-2">
               Training Log
             </p>
@@ -245,7 +245,7 @@ function DatasetUpload() {
       </div>
 
       {uploadResult && (
-        <div className="rounded-lg border border-green-500/30 bg-green-500/10 p-4">
+        <div className="status-surface status-success">
           <p className="text-green-300 font-medium">{uploadResult.message}</p>
           <p className="text-slate-300 text-sm mt-2">
             Imported from: {uploadResult.dataset_name}
@@ -263,14 +263,14 @@ function DatasetUpload() {
       )}
 
       {trainingError && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+        <div className="status-surface status-error">
           <p className="text-red-300 font-medium">Training error</p>
           <p className="text-slate-300 text-sm mt-1">{trainingError}</p>
         </div>
       )}
 
       {error && (
-        <div className="rounded-lg border border-red-500/30 bg-red-500/10 p-4">
+        <div className="status-surface status-error">
           <p className="text-red-300 font-medium">Dataset upload error</p>
           <p className="text-slate-300 text-sm mt-1">{error}</p>
         </div>

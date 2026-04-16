@@ -30,6 +30,28 @@ cd "C:\Users\HOTSPOT\OneDrive\Desktop\Animal detection\frontend"
 npm install
 ```
 
+## Easy Install For Another Laptop
+
+If you want to give this project to someone else and make setup easier, use these files from the project root:
+
+- `install.bat`
+- `run.bat`
+- `update.bat`
+
+How to use:
+
+1. Install Python 3.10+ and Node.js 18+ on that laptop
+2. Download or clone this project
+3. Double-click `install.bat`
+4. After install finishes, double-click `run.bat`
+5. Later, to get the latest version, double-click `update.bat`
+
+What each file does:
+
+- `install.bat`: creates backend virtual environment and installs backend/frontend packages
+- `run.bat`: starts backend and frontend in separate windows and opens the browser
+- `update.bat`: pulls the latest code from GitHub and updates dependencies
+
 ## Normal Run
 
 Open 2 terminals.
